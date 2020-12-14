@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import torchvision
 from torchvision import transforms
 from edge_promoting import edge_promoting
+from tqdm import tqdm
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--name', required=False, default='project_name',  help='')
@@ -33,6 +34,7 @@ parser.add_argument('--latest_discriminator_model', required=False, default='', 
 args = parser.parse_args()
 
 targets_dir = ['five_centimeters', 'papurika', 'spirited_away', 'the_girl']
+test_dir = 'violet'
 source_dir = 'photo'
 
 print('------------ Options -------------')
@@ -80,6 +82,7 @@ train_loader_fake = torch.utils.data.DataLoader(
 test_loader_fake = torch.utils.data.DataLoader(
     torchvision.datasets.FakeData(100,(3,args.input_size,args.input_size), transform=tgt_transform),
     batch_size=1, shuffle=True, drop_last=True)
+test_load_tgt = utils.data_load(os.path.join('data', test_dir), 'train', src_transform, 1, shuffle=True, drop_last=True)
 test_loader_src = utils.data_load(os.path.join('data', source_dir), 'test', src_transform, 1, shuffle=True, drop_last=True)
 
 # network
@@ -208,7 +211,8 @@ for epoch in range(args.train_epoch):
     Gen_losses = []
     Con_losses = []
     targets = [0,1,2,3]
-    for (x, _), (targets[0], _), (targets[1], _), (targets[2], _), (targets[3], _) in zip(train_loader_src, train_loader_tgt[0], train_loader_tgt[1], train_loader_tgt[2], train_loader_tgt[3]):
+    for (x, _), (targets[0], _), (targets[1], _), (targets[2], _), (targets[3], _) in \
+            tqdm(zip(train_loader_src, train_loader_tgt[0], train_loader_tgt[1], train_loader_tgt[2], train_loader_tgt[3])):
         x = x.to(device)
         
         # train D
@@ -275,26 +279,33 @@ for epoch in range(args.train_epoch):
     if epoch % 2 == 1 or epoch == args.train_epoch - 1:
         with torch.no_grad():
             G.eval()
-            for n, (x, _) in enumerate(train_loader_src):
+            for n, ((x, _), (y, _)) in enumerate(zip(train_loader_src, test_load_tgt)):
                 x = x.to(device)
-                G_recon = G(x)
+                y = y.to(device)
+                G_recon = G(x, y)
                 result = torch.cat((x[0], G_recon[0]), 2)
                 path = os.path.join(args.name + '_results', 'Transfer', str(epoch+1) + '_epoch_' + args.name + '_train_' + str(n + 1) + '.png')
                 plt.imsave(path, (result.cpu().numpy().transpose(1, 2, 0) + 1) / 2)
+                path_ = os.path.join(args.name + '_results', 'Transfer', str(epoch+1) + '_epoch_' + args.name + '_train_' + str(n + 1) + 'tgt.png')
+                plt.imsave(path_, (torchvision.utils.make_grid(y,4).cpu().numpy().transpose(1, 2, 0) + 1) / 2)
                 if n == 4:
                     break
 
-            for n, (x, _) in enumerate(test_loader_src):
+            for n, ((x, _), (y, _)) in enumerate(zip(test_loader_src, test_load_tgt)):
                 x = x.to(device)
-                G_recon = G(x)
+                y = y.to(device)
+                G_recon = G(x, y)
                 result = torch.cat((x[0], G_recon[0]), 2)
                 path = os.path.join(args.name + '_results', 'Transfer', str(epoch+1) + '_epoch_' + args.name + '_test_' + str(n + 1) + '.png')
                 plt.imsave(path, (result.cpu().numpy().transpose(1, 2, 0) + 1) / 2)
+                path_ = os.path.join(args.name + '_results', 'Transfer', str(epoch+1) + '_epoch_' + args.name + '_test_' + str(n + 1) + 'tgt.png')
+                plt.imsave(path_, (torchvision.utils.make_grid(y,4).cpu().numpy().transpose(1, 2, 0) + 1) / 2)
                 if n == 4:
                     break
 
             torch.save(G.state_dict(), os.path.join(args.name + '_results', 'generator_latest.pkl'))
-            torch.save(D.state_dict(), os.path.join(args.name + '_results', 'discriminator_latest.pkl'))
+            for name, tmpD in zip(targets_dir, D):
+                torch.save(tmpD.state_dict(), os.path.join(args.name + '_results', name+'_discriminator_latest.pkl'))
 
 total_time = time.time() - start_time
 train_hist['total_time'].append(total_time)
@@ -303,6 +314,7 @@ print("Avg one epoch time: %.2f, total %d epochs time: %.2f" % (torch.mean(torch
 print("Training finish!... save training results")
 
 torch.save(G.state_dict(), os.path.join(args.name + '_results',  'generator_param.pkl'))
-torch.save(D.state_dict(), os.path.join(args.name + '_results',  'discriminator_param.pkl'))
+for name, tmpD in zip(targets_dir, D):
+    torch.save(tmpD.state_dict(), os.path.join(args.name + '_results', name+'_discriminator_param.pkl'))
 with open(os.path.join(args.name + '_results',  'train_hist.pkl'), 'wb') as f:
     pickle.dump(train_hist, f)
