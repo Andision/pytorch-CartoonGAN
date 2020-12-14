@@ -3,19 +3,20 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
+import torchvision
 from torchvision import transforms
 from edge_promoting import edge_promoting
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--name', required=False, default='project_name',  help='')
-parser.add_argument('--src_data', required=False, default='src_data_path',  help='sec data path')
-parser.add_argument('--tgt_data', required=False, default='tgt_data_path',  help='tgt data path')
+# parser.add_argument('--src_data', required=False, default='src_data_path',  help='sec data path')
+# parser.add_argument('--tgt_data', required=False, default='tgt_data_path',  help='tgt data path')
 parser.add_argument('--vgg_model', required=False, default='pre_trained_VGG19_model_path/vgg19.pth', help='pre-trained VGG19 model path')
 parser.add_argument('--in_ngc', type=int, default=3, help='input channel for generator')
 parser.add_argument('--out_ngc', type=int, default=3, help='output channel for generator')
 parser.add_argument('--in_ndc', type=int, default=3, help='input channel for discriminator')
 parser.add_argument('--out_ndc', type=int, default=1, help='output channel for discriminator')
-parser.add_argument('--batch_size', type=int, default=8, help='batch size')
+parser.add_argument('--batch_size', type=int, default=4, help='batch size')
 parser.add_argument('--ngf', type=int, default=64)
 parser.add_argument('--ndf', type=int, default=32)
 parser.add_argument('--nb', type=int, default=8, help='the number of resnet block layer for generator')
@@ -30,6 +31,9 @@ parser.add_argument('--beta2', type=float, default=0.999, help='beta2 for Adam o
 parser.add_argument('--latest_generator_model', required=False, default='', help='the latest trained model path')
 parser.add_argument('--latest_discriminator_model', required=False, default='', help='the latest trained model path')
 args = parser.parse_args()
+
+targets_dir = ['five_centimeters', 'papurika', 'spirited_away', 'the_girl']
+source_dir = 'photo'
 
 print('------------ Options -------------')
 for k, v in sorted(vars(args).items()):
@@ -47,15 +51,16 @@ if not os.path.isdir(os.path.join(args.name + '_results', 'Transfer')):
     os.makedirs(os.path.join(args.name + '_results', 'Transfer'))
 
 # edge-promoting
-if not os.path.isdir(os.path.join('data', args.tgt_data, 'pair')):
-    print('edge-promoting start!!')
-    edge_promoting(os.path.join('data', args.tgt_data, 'train'), os.path.join('data', args.tgt_data, 'pair'))
-else:
-    print('edge-promoting already done')
+for target_path in targets_dir:
+    if not os.path.isdir(os.path.join('data', target_path, 'pair')):
+        print(target_path+'\tedge-promoting start!!')
+        edge_promoting(os.path.join('data', target_path, 'train'), os.path.join('data', target_path, 'pair'))
+    else:
+        print('edge-promoting already done')
 
 # data_loader
 src_transform = transforms.Compose([
-        transforms.Resize((args.input_size, args.input_size)),
+        # transforms.Resize((args.input_size, args.input_size)),
         transforms.ToTensor(),
         transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
 ])
@@ -63,9 +68,19 @@ tgt_transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
 ])
-train_loader_src = utils.data_load(os.path.join('data', args.src_data), 'train', src_transform, args.batch_size, shuffle=True, drop_last=True)
-train_loader_tgt = utils.data_load(os.path.join('data', args.tgt_data), 'pair', tgt_transform, args.batch_size, shuffle=True, drop_last=True)
-test_loader_src = utils.data_load(os.path.join('data', args.src_data), 'test', src_transform, 1, shuffle=True, drop_last=True)
+src_batch = args.batch_size
+tgt_batch = args.batch_size
+train_loader_src = utils.data_load(os.path.join('data', source_dir), 'train', src_transform, src_batch, shuffle=True, drop_last=True)
+train_loader_tgt = []
+for target_path in targets_dir:
+    train_loader_tgt.append(utils.data_load(os.path.join('data', target_path), 'pair', tgt_transform, tgt_batch, shuffle=True, drop_last=True))
+train_loader_fake = torch.utils.data.DataLoader(
+    torchvision.datasets.FakeData(100,(3,args.input_size,args.input_size), transform=tgt_transform),
+    batch_size=tgt_batch, shuffle=True, drop_last=True)
+test_loader_fake = torch.utils.data.DataLoader(
+    torchvision.datasets.FakeData(100,(3,args.input_size,args.input_size), transform=tgt_transform),
+    batch_size=1, shuffle=True, drop_last=True)
+test_loader_src = utils.data_load(os.path.join('data', source_dir), 'test', src_transform, 1, shuffle=True, drop_last=True)
 
 # network
 G = networks.generator(args.in_ngc, args.out_ngc, args.ngf, args.nb)
@@ -75,23 +90,27 @@ if args.latest_generator_model != '':
     else:
         # cpu mode
         G.load_state_dict(torch.load(args.latest_generator_model, map_location=lambda storage, loc: storage))
-
-D = networks.discriminator(args.in_ndc, args.out_ndc, args.ndf)
-if args.latest_discriminator_model != '':
-    if torch.cuda.is_available():
-        D.load_state_dict(torch.load(args.latest_discriminator_model))
-    else:
-        D.load_state_dict(torch.load(args.latest_discriminator_model, map_location=lambda storage, loc: storage))
-VGG = networks.VGG19(init_weights=args.vgg_model, feature_mode=True)
 G.to(device)
-D.to(device)
-VGG.to(device)
 G.train()
-D.train()
+
+D = []
+for i in range(len(targets_dir)):
+    tmpD = networks.discriminator(args.in_ndc, args.out_ndc, args.ndf)
+    if args.latest_discriminator_model != '':
+        if torch.cuda.is_available():
+            tmpD.load_state_dict(torch.load(targets_dir[i] + args.latest_discriminator_model))
+        else:
+            tmpD.load_state_dict(torch.load(targets_dir[i] + args.latest_discriminator_model, map_location=lambda storage, loc: storage))
+    tmpD.to(device)
+    tmpD.train()
+    D.append(tmpD)
+
+VGG = networks.VGG19(init_weights=args.vgg_model, feature_mode=True)
+VGG.to(device)
 VGG.eval()
 print('---------- Networks initialized -------------')
 utils.print_network(G)
-utils.print_network(D)
+utils.print_network(D[0])
 utils.print_network(VGG)
 print('-----------------------------------------------')
 
@@ -101,9 +120,13 @@ L1_loss = nn.L1Loss().to(device)
 
 # Adam optimizer
 G_optimizer = optim.Adam(G.parameters(), lr=args.lrG, betas=(args.beta1, args.beta2))
-D_optimizer = optim.Adam(D.parameters(), lr=args.lrD, betas=(args.beta1, args.beta2))
 G_scheduler = optim.lr_scheduler.MultiStepLR(optimizer=G_optimizer, milestones=[args.train_epoch // 2, args.train_epoch // 4 * 3], gamma=0.1)
-D_scheduler = optim.lr_scheduler.MultiStepLR(optimizer=D_optimizer, milestones=[args.train_epoch // 2, args.train_epoch // 4 * 3], gamma=0.1)
+D_optimizer = []
+D_scheduler = []
+for tmpD in D:
+    tmpD_optimizer = optim.Adam(tmpD.parameters(), lr=args.lrD, betas=(args.beta1, args.beta2))
+    D_optimizer.append(tmpD_optimizer)
+    D_scheduler.append(optim.lr_scheduler.MultiStepLR(optimizer=tmpD_optimizer, milestones=[args.train_epoch // 2, args.train_epoch // 4 * 3], gamma=0.1))
 
 pre_train_hist = {}
 pre_train_hist['Recon_loss'] = []
@@ -114,17 +137,18 @@ pre_train_hist['total_time'] = []
 if args.latest_generator_model == '':
     print('Pre-training start!')
     start_time = time.time()
-    for epoch in range(args.pre_train_epoch):
+    for epoch in range(0):
+    # for epoch in range(args.pre_train_epoch):
         epoch_start_time = time.time()
         Recon_losses = []
-        for x, _ in train_loader_src:
+        for (x, _), (y, _) in zip(train_loader_src, train_loader_fake):
             x = x.to(device)
-
+            y = y.to(device)
             # train generator G
             G_optimizer.zero_grad()
 
             x_feature = VGG((x + 1) / 2)
-            G_ = G(x)
+            G_ = G(x, y)
             G_feature = VGG((G_ + 1) / 2)
 
             Recon_loss = 10 * L1_loss(G_feature, x_feature.detach())
@@ -145,18 +169,20 @@ if args.latest_generator_model == '':
 
     with torch.no_grad():
         G.eval()
-        for n, (x, _) in enumerate(train_loader_src):
+        for n, ((x, _), (y, _)) in enumerate(zip(train_loader_src, train_loader_fake)):
             x = x.to(device)
-            G_recon = G(x)
+            y = y.to(device)
+            G_recon = G(x, y)
             result = torch.cat((x[0], G_recon[0]), 2)
             path = os.path.join(args.name + '_results', 'Reconstruction', args.name + '_train_recon_' + str(n + 1) + '.png')
             plt.imsave(path, (result.cpu().numpy().transpose(1, 2, 0) + 1) / 2)
             if n == 4:
                 break
 
-        for n, (x, _) in enumerate(test_loader_src):
+        for n, ((x, _), (y, _)) in enumerate(zip(test_loader_src, test_loader_fake)):
             x = x.to(device)
-            G_recon = G(x)
+            y = y.to(device)
+            G_recon = G(x, y)
             result = torch.cat((x[0], G_recon[0]), 2)
             path = os.path.join(args.name + '_results', 'Reconstruction', args.name + '_test_recon_' + str(n + 1) + '.png')
             plt.imsave(path, (result.cpu().numpy().transpose(1, 2, 0) + 1) / 2)
@@ -164,7 +190,6 @@ if args.latest_generator_model == '':
                 break
 else:
     print('Load the latest generator model, no need to pre-train')
-
 
 train_hist = {}
 train_hist['Disc_loss'] = []
@@ -179,56 +204,67 @@ fake = torch.zeros(args.batch_size, 1, args.input_size // 4, args.input_size // 
 for epoch in range(args.train_epoch):
     epoch_start_time = time.time()
     G.train()
-    G_scheduler.step()
-    D_scheduler.step()
     Disc_losses = []
     Gen_losses = []
     Con_losses = []
-    for (x, _), (y, _) in zip(train_loader_src, train_loader_tgt):
-        e = y[:, :, :, args.input_size:]
-        y = y[:, :, :, :args.input_size]
-        x, y, e = x.to(device), y.to(device), e.to(device)
-
+    targets = [0,1,2,3]
+    for (x, _), (targets[0], _), (targets[1], _), (targets[2], _), (targets[3], _) in zip(train_loader_src, train_loader_tgt[0], train_loader_tgt[1], train_loader_tgt[2], train_loader_tgt[3]):
+        x = x.to(device)
+        
         # train D
-        D_optimizer.zero_grad()
+        tmpDisc_loss = []
+        for n, y in enumerate(targets):
+            D_optimizer[n].zero_grad()
+            e = y[:, :, :, args.input_size:]
+            y = y[:, :, :, :args.input_size]
+            y, e = y.to(device), e.to(device)
 
-        D_real = D(y)
-        D_real_loss = BCE_loss(D_real, real)
+            D_real = D[n](y)
+            D_real_loss = BCE_loss(D_real, real)
 
-        G_ = G(x)
-        D_fake = D(G_)
-        D_fake_loss = BCE_loss(D_fake, fake)
+            G_ = G(x, y)
+            D_fake = D[n](G_)
+            D_fake_loss = BCE_loss(D_fake, fake)
 
-        D_edge = D(e)
-        D_edge_loss = BCE_loss(D_edge, fake)
+            D_edge = D[n](e)
+            D_edge_loss = BCE_loss(D_edge, fake)
 
-        Disc_loss = D_real_loss + D_fake_loss + D_edge_loss
-        Disc_losses.append(Disc_loss.item())
-        train_hist['Disc_loss'].append(Disc_loss.item())
-
-        Disc_loss.backward()
-        D_optimizer.step()
+            Disc_loss = (D_real_loss + D_fake_loss + D_edge_loss)
+            tmpDisc_loss.append(Disc_loss.item())
+            Disc_loss.backward()
+        Disc_losses.append(tmpDisc_loss)
+        train_hist['Disc_loss'].append(Disc_losses)
+        for tmpD_optimizer in D_optimizer:
+            tmpD_optimizer.step()
 
         # train G
+        tmpGen_loss = []
+        tmpCon_loss = []
         G_optimizer.zero_grad()
+        for n, y in enumerate(targets):
+            e = y[:, :, :, args.input_size:]
+            y = y[:, :, :, :args.input_size]
+            y, e = y.to(device), e.to(device)
+            G_ = G(x, y)
+            D_fake = D[n](G_)
+            D_fake_loss = BCE_loss(D_fake, real)
 
-        G_ = G(x)
-        D_fake = D(G_)
-        D_fake_loss = BCE_loss(D_fake, real)
+            x_feature = VGG((x + 1) / 2)
+            G_feature = VGG((G_ + 1) / 2)
+            Con_loss = args.con_lambda * L1_loss(G_feature, x_feature.detach())
 
-        x_feature = VGG((x + 1) / 2)
-        G_feature = VGG((G_ + 1) / 2)
-        Con_loss = args.con_lambda * L1_loss(G_feature, x_feature.detach())
+            Gen_loss = (D_fake_loss + Con_loss)/4
+            tmpGen_loss.append(D_fake_loss.item())
+            tmpCon_loss.append(Con_loss.item())
 
-        Gen_loss = D_fake_loss + Con_loss
-        Gen_losses.append(D_fake_loss.item())
-        train_hist['Gen_loss'].append(D_fake_loss.item())
-        Con_losses.append(Con_loss.item())
-        train_hist['Con_loss'].append(Con_loss.item())
-
-        Gen_loss.backward()
+            Gen_loss.backward()
+        train_hist['Gen_loss'].append(tmpGen_loss)
+        train_hist['Con_loss'].append(tmpCon_loss)
         G_optimizer.step()
 
+    G_scheduler.step()
+    for tmpD_scheduler in D_scheduler:
+        tmpD_scheduler.step()
 
     per_epoch_time = time.time() - epoch_start_time
     train_hist['per_epoch_time'].append(per_epoch_time)

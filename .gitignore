@@ -1,0 +1,8 @@
+__pycache__/**
+*.jpg
+*.png
+*_results/**
+pre_trained_VGG19_model_path/**
+data/**
+ANN/**
+*.zip
