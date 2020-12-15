@@ -82,7 +82,8 @@ train_loader_fake = torch.utils.data.DataLoader(
 test_loader_fake = torch.utils.data.DataLoader(
     torchvision.datasets.FakeData(100,(3,args.input_size,args.input_size), transform=tgt_transform),
     batch_size=1, shuffle=True, drop_last=True)
-test_load_tgt = utils.data_load(os.path.join('data', test_dir), 'train', src_transform, 1, shuffle=True, drop_last=True)
+train_loader_trans = utils.data_load(os.path.join('data', test_dir), 'train', src_transform, tgt_batch, shuffle=True, drop_last=True)
+test_loader_trans = utils.data_load(os.path.join('data', test_dir), 'train', src_transform, 1, shuffle=True, drop_last=True)
 test_loader_src = utils.data_load(os.path.join('data', source_dir), 'test', src_transform, 1, shuffle=True, drop_last=True)
 
 # network
@@ -140,8 +141,8 @@ pre_train_hist['total_time'] = []
 if args.latest_generator_model == '':
     print('Pre-training start!')
     start_time = time.time()
-    for epoch in range(0):
-    # for epoch in range(args.pre_train_epoch):
+#     for epoch in range(0):
+    for epoch in range(args.pre_train_epoch):
         epoch_start_time = time.time()
         Recon_losses = []
         for (x, _), (y, _) in zip(train_loader_src, train_loader_fake):
@@ -237,7 +238,7 @@ for epoch in range(args.train_epoch):
             tmpDisc_loss.append(Disc_loss.item())
             Disc_loss.backward()
         Disc_losses.append(tmpDisc_loss)
-        train_hist['Disc_loss'].append(Disc_losses)
+        
         for tmpD_optimizer in D_optimizer:
             tmpD_optimizer.step()
 
@@ -262,10 +263,14 @@ for epoch in range(args.train_epoch):
             tmpCon_loss.append(Con_loss.item())
 
             Gen_loss.backward()
-        train_hist['Gen_loss'].append(tmpGen_loss)
-        train_hist['Con_loss'].append(tmpCon_loss)
+        Gen_losses.append(tmpGen_loss)
+        Con_losses.append(tmpCon_loss)
         G_optimizer.step()
 
+    train_hist['Gen_loss'].append(Gen_losses)
+    train_hist['Con_loss'].append(Con_losses)
+    train_hist['Disc_loss'].append(Disc_losses)
+    
     G_scheduler.step()
     for tmpD_scheduler in D_scheduler:
         tmpD_scheduler.step()
@@ -279,7 +284,7 @@ for epoch in range(args.train_epoch):
     if epoch % 2 == 1 or epoch == args.train_epoch - 1:
         with torch.no_grad():
             G.eval()
-            for n, ((x, _), (y, _)) in enumerate(zip(train_loader_src, test_load_tgt)):
+            for n, ((x, _), (y, _)) in enumerate(zip(train_loader_src, train_loader_trans)):
                 x = x.to(device)
                 y = y.to(device)
                 G_recon = G(x, y)
@@ -291,7 +296,7 @@ for epoch in range(args.train_epoch):
                 if n == 4:
                     break
 
-            for n, ((x, _), (y, _)) in enumerate(zip(test_loader_src, test_load_tgt)):
+            for n, ((x, _), (y, _)) in enumerate(zip(test_loader_src, test_loader_trans)):
                 x = x.to(device)
                 y = y.to(device)
                 G_recon = G(x, y)
