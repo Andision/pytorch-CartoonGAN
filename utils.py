@@ -1,4 +1,4 @@
-import itertools, imageio, torch, random
+import itertools, torch, random
 import matplotlib.pyplot as plt
 import numpy as np
 import torch.nn as nn
