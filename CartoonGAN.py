@@ -79,9 +79,9 @@ for target_path in targets_dir:
 train_loader_fake = torch.utils.data.DataLoader(
     torchvision.datasets.FakeData(100,(3,args.input_size,args.input_size), transform=tgt_transform),
     batch_size=tgt_batch, shuffle=True, drop_last=True)
-test_loader_fake = torch.utils.data.DataLoader(
-    torchvision.datasets.FakeData(100,(3,args.input_size,args.input_size), transform=tgt_transform),
-    batch_size=1, shuffle=True, drop_last=True)
+# test_loader_fake = torch.utils.data.DataLoader(
+#     torchvision.datasets.FakeData(100,(3,args.input_size,args.input_size), transform=tgt_transform),
+#     batch_size=tgt_batch, shuffle=True, drop_last=True)
 train_loader_trans = utils.data_load(os.path.join('data', test_dir), 'train', src_transform, tgt_batch, shuffle=True, drop_last=True)
 # test_loader_trans = utils.data_load(os.path.join('data', test_dir), 'train', src_transform, 1, shuffle=True, drop_last=True)
 test_loader_src = utils.data_load(os.path.join('data', source_dir), 'test', src_transform, 1, shuffle=True, drop_last=True)
@@ -183,7 +183,7 @@ if args.latest_generator_model == '':
             if n == 4:
                 break
 
-        for n, ((x, _), (y, _)) in enumerate(zip(test_loader_src, test_loader_fake)):
+        for n, ((x, _), (y, _)) in enumerate(zip(test_loader_src, train_loader_fake)):
             x = x.to(device)
             y = y.to(device)
             G_recon = G(x, y)
