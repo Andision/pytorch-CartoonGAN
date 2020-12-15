@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
 from torchvision import transforms
+import torchvision
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--name', required=False, default='project_name',  help='')
@@ -31,13 +32,18 @@ parser.add_argument('--image_dir', required=True, default='image_dir', help='tes
 parser.add_argument('--output_image_dir', required=True, default='output_image_dir', help='output test image path')
 args = parser.parse_args()
 
+print('------------ Options -------------')
+for k, v in sorted(vars(args).items()):
+    print('%s: %s' % (str(k), str(v)))
+print('-------------- End ----------------')
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 if torch.backends.cudnn.enabled:
     torch.backends.cudnn.benchmark = True
 
 G = networks.generator(args.in_ngc, args.out_ngc, args.ngf, args.nb)
 if torch.cuda.is_available():
-    G.load_state_dict(torch.load(args.pre_trained_model))
+    G.load_state_dict(torch.load(args.pre_trained_model),False)
 else:
     # cpu mode
     G.load_state_dict(torch.load(args.pre_trained_model, map_location=lambda storage, loc: storage))
@@ -49,15 +55,33 @@ src_transform = transforms.Compose([
         transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
 ])
 # utils.data_load(os.path.join('data', args.src_data), 'test', src_transform, 1, shuffle=True, drop_last=True)
-image_src = utils.data_load(os.path.join(args.image_dir), 'test', src_transform, 1, shuffle=True, drop_last=True)
+# image_src = utils.data_load(os.path.join(args.image_dir), 'test', src_transform, 1, shuffle=True, drop_last=True)
+
+# with torch.no_grad():
+#     G.eval()
+#     for n, (x, _) in enumerate(image_src):
+#         x = x.to(device)
+#         G_recon = G(x)
+#         result = torch.cat((x[0], G_recon[0]), 2)
+#         path = os.path.join(args.output_image_dir, str(n + 1) + '.png')
+#         plt.imsave(path, (result.cpu().numpy().transpose(1, 2, 0) + 1) / 2)
+
+test_dir = 'ani'
+source_dir = 'src'
+test_loader_trans = utils.data_load(os.path.join('data', test_dir), 'test', src_transform, 1, shuffle=True, drop_last=True)
+test_loader_src = utils.data_load(os.path.join('data', source_dir), 'test', src_transform, 1, shuffle=True, drop_last=True)
 
 with torch.no_grad():
     G.eval()
-    for n, (x, _) in enumerate(image_src):
+
+    for n, ((x, _), (y, _)) in enumerate(zip(test_loader_src, test_loader_trans)):
         x = x.to(device)
-        G_recon = G(x)
+        y = y.to(device)
+        G_recon = G(x, y)
         result = torch.cat((x[0], G_recon[0]), 2)
-        path = os.path.join(args.output_image_dir, str(n + 1) + '.png')
+        path = os.path.join(args.name + '_results', 'Transfer', args.name + '_test_' + str(n + 1) + '.png')
         plt.imsave(path, (result.cpu().numpy().transpose(1, 2, 0) + 1) / 2)
-
-
+        path_ = os.path.join(args.name + '_results', 'Transfer', args.name + '_test_' + str(n + 1) + '_tgt.png')
+        plt.imsave(path_, (torchvision.utils.make_grid(y,4).cpu().numpy().transpose(1, 2, 0) + 1) / 2)
+        if n == 4:
+            break
