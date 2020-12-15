@@ -145,7 +145,7 @@ if args.latest_generator_model == '':
     for epoch in range(args.pre_train_epoch):
         epoch_start_time = time.time()
         Recon_losses = []
-        for (x, _), (y, _) in zip(train_loader_src, train_loader_fake):
+        for (x, _), (y, _) in tqdm(zip(train_loader_src, train_loader_fake)):
             x = x.to(device)
             y = y.to(device)
             # train generator G
