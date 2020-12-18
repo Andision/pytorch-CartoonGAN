@@ -82,8 +82,9 @@ class generator(nn.Module):
     # forward method
     def forward(self, input, target):
         x = self.down_convs(input)
-        f = self.extract_convs(target)
-        x = self.resnet_blocks(torch.cat((x,f), dim=1))
+        f = self.extract_convs(target).mean(dim=0, keepdim=True)
+        x = self.resnet_blocks(torch.cat((x,
+            f.repeat(x.size(0),1,1,1)), dim=1))
         output = self.up_convs(x)
 
         return output
